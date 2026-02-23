@@ -365,23 +365,17 @@ class Pose(Detect):
     def kpts_decode(self, bs: int, kpts: torch.Tensor) -> torch.Tensor:
         """Decode keypoints from predictions."""
         ndim = self.kpt_shape[1]
-        if self.export:
-            # NCNN fix
-            y = kpts.view(bs, *self.kpt_shape, -1)
-            a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
-            if ndim == 3:
-                a = torch.cat((a, y[:, :, 2:3].sigmoid()), 2)
-            return a.view(bs, self.nk, -1)
+        # Out-of-place decode to avoid in-place writes on strided views that can
+        # break autograd versioning when gradients flow through pose decode.
+        y = kpts.view(bs, *self.kpt_shape, -1)  # (bs, K, ndim, A)
+        x_dec = (y[:, :, 0, :] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
+        y_dec = (y[:, :, 1, :] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
+        if ndim == 3:
+            c_dec = y[:, :, 2, :].sigmoid()
+            out = torch.stack((x_dec, y_dec, c_dec), dim=2)  # (bs, K, 3, A)
         else:
-            y = kpts.clone()
-            if ndim == 3:
-                if NOT_MACOS14:
-                    y[:, 2::ndim].sigmoid_()
-                else:  # Apple macOS14 MPS bug https://github.com/ultralytics/ultralytics/pull/21878
-                    y[:, 2::ndim] = y[:, 2::ndim].sigmoid()
-            y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
-            y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
-            return y
+            out = torch.stack((x_dec, y_dec), dim=2)  # (bs, K, 2, A)
+        return out.view(bs, self.nk, -1)
 
 
 class Classify(nn.Module):
