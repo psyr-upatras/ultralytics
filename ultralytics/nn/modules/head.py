@@ -351,10 +351,12 @@ class Pose(Detect):
 
         c4 = max(ch[0] // 4, self.nk)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1)) for x in ch)
+        self.last_neck_feats = None
 
     def forward(self, x: list[torch.Tensor]) -> torch.Tensor | tuple:
         """Perform forward pass through YOLO model and return predictions."""
         bs = x[0].shape[0]  # batch size
+        self.last_neck_feats = tuple(x)
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
         x = Detect.forward(self, x)
         if self.training:
